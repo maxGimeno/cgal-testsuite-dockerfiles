@@ -29,7 +29,7 @@ import shutil
 import sys
 import time
 import tempfile
-import docker
+import podman
 import signal
 import subprocess
 
@@ -87,7 +87,7 @@ def upload_results(local_path):
 
 def platform_from_container(client, cont_id):
     platform_regex = re.compile('^CGAL_TEST_PLATFORM=(.*)$')
-    for e in client.inspect_container(container=cont_id)[u'Config'][u'Env']:
+    for e in client.containers.get(cont_id).inspect()[35]['env']: #35 is config
         res = platform_regex.search(e)
         if res:
             return res.group(1)
@@ -172,10 +172,10 @@ def main():
     if not args.jobs:
         args.jobs = args.container_cpus
 
-    client = docker.APIClient(base_url=args.docker_url, version='1.24', timeout=300)
+    client = podman.Client()
 
     # Perform a check for existing, running containers.
-    existing = [cont for cont in client.containers(filters = { 'status' : 'running'})]
+    existing = [cont for cont in client.containers.list() if cont.status == 'running']
     generic_name_regex = re.compile('CGAL-.+-testsuite')
     for cont in existing:
         for name in cont[u'Names']:
@@ -210,7 +210,7 @@ def main():
 
     logging.info('Running a maximum of %i containers in parallel each using %i CPUs and using %i jobs' % (nb_parallel_containers, args.container_cpus, args.jobs))
 
-    runner = ContainerRunner(client, args.tester, args.tester_name, 
+    runner = ContainerRunner(client, args.tester, args.tester_name,
                              args.tester_address, args.force_rm, args.jobs,
                              release, args.testresults, args.use_fedora_selinux_policy,
                              args.intel_license, args.mac_address)

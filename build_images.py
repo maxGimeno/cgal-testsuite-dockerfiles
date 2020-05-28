@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--docker-url', metavar='protocol://hostname/to/docker.sock[:PORT]',
                         default='unix://var/run/docker.sock',
                         help='The protocol+hostname+port where the Docker server is hosted.')
-    
+
     args = parser.parse_args()
     client = docker.Client(base_url=args.docker_url)
 
@@ -46,6 +46,6 @@ def main():
         response = client.build(path=d, rm=True, tag=tag, stream=False)
         for l in response:
             print l
-    
+
 if __name__ == "__main__":
     main()

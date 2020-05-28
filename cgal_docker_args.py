@@ -18,13 +18,13 @@ class CustomArgumentParser(argparse.ArgumentParser):
 def parser():
     """Return the command line argument parser for test_cgal"""
     parser = CustomArgumentParser(
-        description='''This script launches docker containers which run the CGAL testsuite.''',
+        description='''This script launches podman containers which run the CGAL testsuite.''',
         fromfile_prefix_chars='@')
 
     local_dir = path.dirname(path.realpath(__file__))
 
     # Testing related arguments
-    parser.add_argument('--images', nargs='*', 
+    parser.add_argument('--images', nargs='*',
                         help='List of images to launch, defaults to all prefixed with cgal-testsuite')
     parser.add_argument('--testsuite', metavar='/path/to/testsuite',
                         help='Absolute path where the release is going to be stored.',
@@ -42,10 +42,10 @@ def parser():
                         help='Container MAC address. Necessary for newer Intel Licenses.',
                         default=None)
 
-    # Docker related arguments
-    parser.add_argument('--docker-url', metavar='protocol://hostname/to/docker.sock[:PORT]',
-                        default='unix://var/run/docker.sock',
-                        help='The protocol+hostname+port where the Docker server is hosted.')
+    # Podman related arguments
+    parser.add_argument('--podman-url', metavar='protocol://hostname/to/podman.sock[:PORT]',
+                        default='',
+                        help='The protocol+hostname+port where the podman server is hosted.')
     parser.add_argument('--force-rm', action='store_true',
                         help='If a container with the same name already exists, force it to quit')
     parser.add_argument('--max-cpus', metavar='N', default=cpu_count(), type=int,
@@ -54,7 +54,7 @@ def parser():
                         help='The number of CPUs a single container should have. Defaults to one.')
     parser.add_argument('--jobs', metavar='N', default=None, type=int,
                         help='The number of jobs a single container is going to launch. Defaults to --container-cpus.')
-    parser.add_argument('--use-fedora-selinux-policy', action='store_true', 
+    parser.add_argument('--use-fedora-selinux-policy', action='store_true',
                         help='Mount volumes with z option to accomodate SELinux on Fedora.')
 
     # Download related arguments

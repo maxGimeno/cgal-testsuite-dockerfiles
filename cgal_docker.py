@@ -1,8 +1,9 @@
 from os import path
 import logging
 import docker
+import podman
 import re
-import StringIO
+import io
 
 class TestsuiteException(Exception):
     pass
@@ -21,52 +22,55 @@ class TestsuiteError(TestsuiteException):
     def __str__(self):
         return 'Testsuite Error: ' + repr(self.value)
 
-def container_by_id(docker_client, Id):
+def container_by_id(podman_client, Id):
     """Returns a container given an `Id`. Raises `TestsuiteError` if the
     `Id` cannot be found."""
-    contlist = [cont for cont in docker_client.containers(all=True) if Id == cont[u'Id']]
+    contlist = [cont for cont in podman_client.containers(all=True) if Id == cont[u'Id']]
     if len(contlist) != 1:
         raise TestsuiteError('Requested Container Id ' + Id + 'does not exist')
     return contlist[0]
 
-def images(docker_client, images):
+def images(podman_client, images):
     """If `images` is `None`, returns a list of default images, else
     validates the list of images and returns it. Raises an exception
     if an invalid image is found.
     """
     if not images:
-        return _default_images(docker_client)
-    not_existing = _not_existing_images(docker_client, images)
+        return _default_images(podman_client)
+    not_existing = _not_existing_images(podman_client, images)
+    for index in range(len(not_existing)):
+      podman_client.images.pull(not_existing.pop())
+    not_existing = _not_existing_images(podman_client, images)
     if len(not_existing) != 0:
         raise TestsuiteError('Could not find specified images: ' + ', '.join(not_existing))
 
     return images
 
-def _default_images(docker_client):
+def _default_images(podman_client):
     images = []
-    for img in docker_client.images():
-        tag = next((x for x in img[u'RepoTags'] if x.startswith(u'cgal-testsuite/')), None)
+    for img in podman_client.images.list():
+        tag = next((x for x in img.repoTags if x.startswith(u'cgal-testsuite/')), None)
         if tag:
             images.append(tag)
     return images
 
-def _not_existing_images(docker_client, images):
+def _not_existing_images(podman_client, images):
     """Checks if each image in the list `images` is actually a name
     for a docker image. Returns a list of not existing names."""
     # Since img might contain a :TAG we need to work it a little.
-    return [img for img in images if len(docker_client.images(name=img.rsplit(':')[0])) == 0]
+    return [img for img in images for cl_img in client.images.list() if cl_img.repoTags[0].rsplit(':')[0] != img.rsplit(':')[0] ]
 
 class ContainerRunner:
     # A regex to decompose the name of an image into the groups
     # ('user', 'name', 'tag')
     _image_name_regex = re.compile('(.*/)?([^:]*)(:.*)?')
 
-    def __init__(self, docker_client, tester, tester_name, 
-                 tester_address, force_rm, nb_jobs, testsuite, 
+    def __init__(self, podman_client, tester, tester_name,
+                 tester_address, force_rm, nb_jobs, testsuite,
                  testresults, use_fedora_selinux_policy, intel_license, mac_address=None):
         assert path.isabs(testsuite.path), 'testsuite needs to be an absolute path'
         assert path.isabs(testresults), 'testresults needs to be an absolute path'
-        self.docker_client = docker_client
+        self.podman_client = podman_client
         self.force_rm = force_rm
         self.use_fedora_selinux_policy = use_fedora_selinux_policy
         self.environment={"CGAL_TESTER" : tester,
@@ -106,12 +110,11 @@ class ContainerRunner:
     def run(self, image, cpuset):
         """Create and start a container of the `image` with `cpuset`."""
 
-        container_id = self._create_container(image, cpuset)
-        cont = container_by_id(self.docker_client, container_id)
+        cont = self._create_container(image, cpuset)
         logging.info('Created container: {0} with id {1[Id]} from image {1[Image]} on cpus {2}'
-                     .format(', '.join(cont[u'Names']), cont, cpuset))
-        self.docker_client.start(container_id)
-        return container_id
+                     .format(', '.join(ctnr['names']), cont['id']))
+        cont.start()
+        return cont._id
 
     def _create_container(self, img, cpuset):
         # This is a bit wacky since names can be basically anything but we expect two kinds of names:
@@ -124,38 +127,39 @@ class ContainerRunner:
         else:
             chosen_name = 'CGAL-{}-testsuite'.format(res.group(2))
 
-        existing = [cont for cont in self.docker_client.containers(all=True) if '/' + chosen_name in cont[u'Names']]
+        existing = [cont for cont in self.podman_client.containers.list() if '/' + chosen_name in cont['names']]
         assert len(existing) == 0 or len(existing) == 1, 'Length of existing containers is odd'
 
-        if len(existing) != 0 and u'Exited' in existing[0][u'Status']:
+        if len(existing) != 0 and 'exited' in existing[0]['status']:
             logging.info('An Exited container with name {} already exists. Removing.'.format(chosen_name))
-            self.docker_client.remove_container(container=chosen_name)
+            [cont.remove() for cont in self.podman_client.containers.list() if cont['names'] == chosen_name]
         elif len(existing) != 0 and self.force_rm:
             logging.info('A non-Exited container with name {} already exists. Forcing exit and removal.'.format(chosen_name))
-            self.docker_client.remove_container(container=chosen_name, force=True)
+            [cont.remove(True) for cont in self.podman_client.containers.list() if cont['names'] == chosen_name]
         elif len(existing) != 0:
             raise TestsuiteWarning('A non-Exited container with name {} already exists. Skipping.'.format(chosen_name))
-        
-        config = self.docker_client.create_host_config(binds=self.bind,
-                                                       cpuset_cpus=cpuset)
-        if self.use_fedora_selinux_policy:
-            config['Binds'][0] += ',z'
-            config['Binds'][1] += ',z'
 
-        container = self.docker_client.create_container(
-            image=img,
-            name=chosen_name,
-            entrypoint=['/mnt/testsuite/docker-entrypoint.sh'],
-            volumes=['/mnt/testsuite', '/mnt/testresults'],
-            environment=self.environment,
-            host_config=config,
-            mac_address=self.mac_address
+        #  config = self.podman_client.create_host_config(binds=self.bind,
+        #                                                 cpuset_cpus=cpuset)
+        # if self.use_fedora_selinux_policy:
+        #     config['Binds'][0] += ',z'
+        #     config['Binds'][1] += ',z'
+        cimg = [im for im in self.podman_client.images.list() if im.repoTags[0] == img ]
+        container = cimg.create(name=chosen_name,
+            cpuSetCpus='1,2,3',
+            entrypoint='/mnt/testsuite/docker-entrypoint.sh',
+            volumes=['/mnt/testsuite', '/mnt/testresults']
         )
-
-        if container[u'Warnings']:
-            logging.warning('Container of image {} got created with warnings: {}'.format(img, container[u'Warnings']))
-
-        return container[u'Id']
+        #.create_container(
+        #    image=cimg,
+        #    name=chosen_name,
+        #    entrypoint=['/mnt/testsuite/docker-entrypoint.sh'],
+        #    volumes=['/mnt/testsuite', '/mnt/testresults'],
+        #    environment=self.environment,
+        #    host_config=config,
+        #    mac_address=self.mac_address
+        #)
+        return container._id
 
 class ContainerScheduler:
     def __init__(self, runner, images, cpusets):
@@ -165,7 +169,7 @@ class ContainerScheduler:
         self.running_containers = {}
         # error handling
         self.errors_encountered = False
-        self.error_buffer=StringIO.StringIO()
+        self.error_buffer=io.StringIO()
         self.error_handler=logging.StreamHandler(self.error_buffer)
         self.error_handler.setFormatter( logging.Formatter('%(levelname)s: %(message)s') )
         self.error_logger = logging.getLogger("Error_logger")
@@ -190,6 +194,7 @@ class ContainerScheduler:
                 cont_id = self.runner.run(image_to_launch, self.available_cpusets[-1])
             except TestsuiteWarning as e:
                 logging.warning(e.value)
+            #won't happen with podman
             except docker.errors.APIError as e:
                 run_no_exception=False
                 self.errors_encountered = True
@@ -227,7 +232,7 @@ class ContainerScheduler:
         """Kill all still running containers."""
         for cont in self.running_containers:
             logging.info('Killing Container ID {}'.format(cont))
-            self.runner.docker_client.kill(cont)
+            self.runner.podman_client.containers.get(cont).kill()
 
 if __name__ == "__main__":
     pass
