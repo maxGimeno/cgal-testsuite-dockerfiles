@@ -15,7 +15,7 @@
 #
 # Author(s)     : Philipp Moeller
 
-from __future__ import division
+
 
 import logging
 from cgal_docker import *
@@ -178,7 +178,7 @@ def main():
     existing = [cont for cont in client.containers.list() if cont.status == 'running']
     generic_name_regex = re.compile('CGAL-.+-testsuite')
     for cont in existing:
-        for name in cont[u'Names']:
+        for name in cont['Names']:
             if generic_name_regex.match(name):
                 info.error('Testsuite Container {} of previous suite still running. Aborting. NOTE: This could also be a name clash.')
                 sys.exit(0)
@@ -222,65 +222,10 @@ def main():
     if not launch_result:
         logging.error('Exiting without starting any containers.')
         sys.exit('Exiting without starting any containers.')
-
-    # Possible events are: create, destroy, die, export, kill, pause,
-    # restart, start, stop, unpause.
-
-    # We only care for die events. The problem is that a killing or
-    # stopping a container will also result in a die event before
-    # emitting a kill/stop event. So, when a container dies, we cannot
-    # know if it got stopped, killed or exited regularly. Waiting for
-    # the next event with a timeout is very flaky and error
-    # prone. This is a known design flaw of the docker event API. To
-    # work around it, we parse the ExitCode of the container die event and
-    # base our decision on it.
-
-    # Process events since starting our containers, so we don't miss
-    # any event that might have occured while we were still starting
-    # containers. The decode parameter has been documented as a
-    # resolution to this issue
-    # https://github.com/docker/docker-py/issues/585
-    try:
-        for ev in client.events(since=before_start, decode=True):
-            assert isinstance(ev, dict)
-            if ev[u'Type'] != u'container':
-                continue;
-            event_id = ev[u'id']
-
-            if scheduler.is_ours(event_id): # we care
-                if ev[u'status'] == u'die':
-                    if ev[u'Actor'][u'Attributes'][u'exitCode']!='0':
-                        logging.warning('Could not parse exit status: {}. Assuming dirty death of the container.'
-                                        .format(ev[u'Actor'][u'Attributes'][u'exitCode']))
-                    else:
-                        logging.info('Container died cleanly, handling results.')
-                        try:
-                            handle_results(client, event_id, args.upload_results, args.testresults,
-                                           release, args.tester)
-                        except TestsuiteException as e:
-                            logging.exception(str(e))
-                            # The freed up cpu_set.
-                    scheduler.container_finished(event_id)
-                    if not scheduler.launch():
-                        logging.info('No more images to launch.')
-                    if not scheduler.containers_running():
-                        logging.info('Handled all images.')
-                        break
-    except KeyboardInterrupt:
-        logging.warning('SIGINT received, cleaning up containers!')
-        scheduler.kill_all()
-    except SystemExit:
-        logging.warning('SIGTERM received, cleaning up containers!')
-        scheduler.kill_all()
-
-    if not args.use_local:
-        logging.info('Cleaning up {}'.format(release.path))
-        shutil.rmtree(release.path)
-
     remove_pidfile()
 
     if scheduler.errors_encountered:
-      print (scheduler.error_buffer.getvalue())
+      print((scheduler.error_buffer.getvalue()))
       exit(33)
 
 if __name__ == "__main__":

@@ -40,9 +40,9 @@ def images(podman_client, images):
     not_existing = _not_existing_images(podman_client, images)
     for index in range(len(not_existing)):
       podman_client.images.pull(not_existing.pop())
-    not_existing = _not_existing_images(podman_client, images)
-    if len(not_existing) != 0:
-        raise TestsuiteError('Could not find specified images: ' + ', '.join(not_existing))
+    still_not_existing = _not_existing_images(podman_client, images)
+    if len(still_not_existing) != 0:
+        raise TestsuiteError('Could not find specified images: ' + ', '.join(still_not_existing))
 
     return images
 
@@ -58,7 +58,8 @@ def _not_existing_images(podman_client, images):
     """Checks if each image in the list `images` is actually a name
     for a docker image. Returns a list of not existing names."""
     # Since img might contain a :TAG we need to work it a little.
-    return [img for img in images for cl_img in client.images.list() if cl_img.repoTags[0].rsplit(':')[0] != img.rsplit(':')[0] ]
+    cl_images = [cl_img.repoTags[0].rsplit(':')[1] for cl_img in podman_client.images.list() if len(cl_img.repoTags) > 0]
+    return [img for img in images if not img.rsplit(':')[1] in cl_images]
 
 class ContainerRunner:
     # A regex to decompose the name of an image into the groups
@@ -78,24 +79,11 @@ class ContainerRunner:
                           "CGAL_TESTER_ADDRESS": tester_address,
                           "CGAL_NUMBER_OF_JOBS" : nb_jobs
         }
-        self.bind = {
-            testsuite.path:
-            {
-                'bind': '/mnt/testsuite',
-                'ro': True
-            },
-            testresults:
-            {
-                'bind': '/mnt/testresults',
-                'ro': False
-            }
-        }
+        self.bind=['type=bind,src='+testsuite.path+',target=/mnt/testsuite,ro=True',
+        'type=bind,src='+testresults+',target=/mnt/testresults,ro=False']
         if intel_license and path.isdir(intel_license):
             assert path.isabs(intel_license), 'intel_license needs to be an absolute path'
-            self.bind[intel_license] = {
-                'bind': '/opt/intel/licenses',
-                'ro': True
-            }
+            self.bind.append('type=bind,src='+intel_license+',target=/opt/intel/licenses,ro=True')
             logging.info('Using {} as intel license directory'.format(intel_license))
         else:
             logging.info('Not using an intel license directory')
@@ -111,8 +99,8 @@ class ContainerRunner:
         """Create and start a container of the `image` with `cpuset`."""
 
         cont = self._create_container(image, cpuset)
-        logging.info('Created container: {0} with id {1[Id]} from image {1[Image]} on cpus {2}'
-                     .format(', '.join(ctnr['names']), cont['id']))
+        logging.info('Created container: {0} with id {1} from image {2} on cpus {3}'
+                     .format(', '.join(cont['names']), cont['id'], cont.inspect()[6], cpuset))
         cont.start()
         return cont._id
 
@@ -139,16 +127,15 @@ class ContainerRunner:
         elif len(existing) != 0:
             raise TestsuiteWarning('A non-Exited container with name {} already exists. Skipping.'.format(chosen_name))
 
-        #  config = self.podman_client.create_host_config(binds=self.bind,
-        #                                                 cpuset_cpus=cpuset)
-        # if self.use_fedora_selinux_policy:
-        #     config['Binds'][0] += ',z'
-        #     config['Binds'][1] += ',z'
-        cimg = [im for im in self.podman_client.images.list() if im.repoTags[0] == img ]
-        container = cimg.create(name=chosen_name,
-            cpuSetCpus='1,2,3',
+        cimg = [im for im in self.podman_client.images.list() if im.repoTags[0].rsplit(':')[1] == img.rsplit(':')[1] ]
+        if len(cimg) == 0 :
+          raise TestsuiteError('missing image ' + img)
+        print("img = ", img)
+        print("chosen_name = ", chosen_name)
+        container = cimg[0].create(name=chosen_name,
+            cpuSetCpus=cpuset,
             entrypoint='/mnt/testsuite/docker-entrypoint.sh',
-            volumes=['/mnt/testsuite', '/mnt/testresults']
+            mount=self.bind
         )
         #.create_container(
         #    image=cimg,
@@ -159,7 +146,7 @@ class ContainerRunner:
         #    host_config=config,
         #    mac_address=self.mac_address
         #)
-        return container._id
+        return container
 
 class ContainerScheduler:
     def __init__(self, runner, images, cpusets):
