@@ -205,16 +205,17 @@ def main():
     subprocess.call(['cp', '--preserve=xattr', os.path.join(local_dir, 'docker-entrypoint.sh'), release.path])
     subprocess.call(['cp', '--preserve=xattr', os.path.join(local_dir, 'run-testsuite.sh'), release.path])
 
-    cpu_sets = calculate_cpu_sets(args.max_cpus, args.container_cpus)
-    nb_parallel_containers = len(cpu_sets)
+    #cpu_sets = calculate_cpu_sets(args.max_cpus, args.container_cpus)
+    #nb_parallel_containers = len(cpu_sets)
 
-    logging.info('Running a maximum of %i containers in parallel each using %i CPUs and using %i jobs' % (nb_parallel_containers, args.container_cpus, args.jobs))
+    #logging.info('Running a maximum of %i containers in parallel each using %i CPUs and using %i jobs' % (nb_parallel_containers, args.container_cpus, args.jobs))
 
     runner = ContainerRunner(client, args.tester, args.tester_name,
                              args.tester_address, args.force_rm, args.jobs,
                              release, args.testresults, args.use_fedora_selinux_policy,
                              args.intel_license, args.mac_address)
-    scheduler = ContainerScheduler(runner, args.images, cpu_sets)
+    #scheduler = ContainerScheduler(runner, args.images, cpu_sets)
+    scheduler = ContainerScheduler(runner, args.images)
     # Translate SIGTERM to SystemExit exception
     signal.signal(signal.SIGTERM, term_handler)
     before_start = int(time.time())

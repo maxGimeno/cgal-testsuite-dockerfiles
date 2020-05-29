@@ -74,11 +74,10 @@ class ContainerRunner:
         self.podman_client = podman_client
         self.force_rm = force_rm
         self.use_fedora_selinux_policy = use_fedora_selinux_policy
-        self.environment={"CGAL_TESTER" : tester,
-                          "CGAL_TESTER_NAME" : tester_name,
-                          "CGAL_TESTER_ADDRESS": tester_address,
-                          "CGAL_NUMBER_OF_JOBS" : nb_jobs
-        }
+        self.environment=["CGAL_TESTER="+tester,
+                          "CGAL_TESTER_NAME="+tester_name,
+                          "CGAL_TESTER_ADDRESS="+tester_address,
+                          "CGAL_NUMBER_OF_JOBS={}".format(nb_jobs)]
         self.bind=['type=bind,src='+testsuite.path+',target=/mnt/testsuite,ro=True',
         'type=bind,src='+testresults+',target=/mnt/testresults,ro=False']
         if intel_license and path.isdir(intel_license):
@@ -95,16 +94,16 @@ class ContainerRunner:
         else:
             logging.info('Not using custom MAC address')
 
-    def run(self, image, cpuset):
-        """Create and start a container of the `image` with `cpuset`."""
+    def run(self, image):
+        """Create and start a container of the `image`."""
 
-        cont = self._create_container(image, cpuset)
-        logging.info('Created container: {0} with id {1} from image {2} on cpus {3}'
-                     .format(', '.join(cont['names']), cont['id'], cont.inspect()[6], cpuset))
+        cont = self._create_container(image)
+        logging.info('Created container: {0} with id {1} from image {2}'
+                     .format(cont['names'], cont['id'], cont.inspect()[6]))
         cont.start()
         return cont._id
 
-    def _create_container(self, img, cpuset):
+    def _create_container(self, img):
         # This is a bit wacky since names can be basically anything but we expect two kinds of names:
         # (docker.io/)cgal-testsuite/PLATFORM or cgal/testsuite-docker:PLATFORM
         res = self._image_name_regex.search(img)
@@ -133,8 +132,8 @@ class ContainerRunner:
         print("img = ", img)
         print("chosen_name = ", chosen_name)
         container = cimg[0].create(name=chosen_name,
-            cpuSetCpus=cpuset,
             entrypoint='/mnt/testsuite/docker-entrypoint.sh',
+            env=self.environment,
             mount=self.bind
         )
         #.create_container(
@@ -149,11 +148,10 @@ class ContainerRunner:
         return container
 
 class ContainerScheduler:
-    def __init__(self, runner, images, cpusets):
+    def __init__(self, runner, images):
         self.runner = runner
         self.images = images
-        self.available_cpusets = cpusets
-        self.running_containers = {}
+        self.running_containers = []
         # error handling
         self.errors_encountered = False
         self.error_buffer=io.StringIO()
@@ -171,14 +169,11 @@ class ContainerScheduler:
         if len(self.images) == 0:
             return False
 
-        while self.available_cpusets and self.images:
-            # Remove the image but not the cpuset before
-            # running. Should run throw, the image is dropped, but the
-            # cpuset is kept.
+        while self.images:
             image_to_launch = self.images.pop()
             run_no_exception=True
             try:
-                cont_id = self.runner.run(image_to_launch, self.available_cpusets[-1])
+              cont_id = self.runner.run(image_to_launch)
             except TestsuiteWarning as e:
                 logging.warning(e.value)
             #won't happen with podman
@@ -193,17 +188,10 @@ class ContainerScheduler:
                 if nb_images==0:
                   return False
             if run_no_exception:
-                self.running_containers[cont_id] = self.available_cpusets.pop()
+                self.running_containers.append(cont_id)
 
         return True
 
-    def container_finished(self, container_id):
-        """Indicate that a container has finished and its cpuset is available again."""
-        cpuset = self.running_containers.pop(container_id, None)
-        if not cpuset:
-            logging.warning('Container ID {} never launched by scheduler.'.format(container_id))
-            return
-        self.available_cpusets.append(cpuset)
 
     def is_ours(self, container_id):
         """Return `True` if the container specified by `container_id` has been
@@ -219,7 +207,7 @@ class ContainerScheduler:
         """Kill all still running containers."""
         for cont in self.running_containers:
             logging.info('Killing Container ID {}'.format(cont))
-            self.runner.podman_client.containers.get(cont).kill()
+            self.runner.podman_client.containers.get(cont).kill(True)
 
 if __name__ == "__main__":
     pass
