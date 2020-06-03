@@ -93,21 +93,6 @@ def platform_from_container(client, cont_id):
             return res.group(1)
     return 'NO_TEST_PLATFORM'
 
-def calculate_cpu_sets(max_cpus, cpus_per_container):
-    """Returns a list with strings specifying the CPU sets used for
-    execution of this testsuite."""
-    # Explicit floor division from future
-    nb_parallel_containers = max_cpus // cpus_per_container
-    cpu = 0
-    cpu_sets = []
-    for r in range(0, nb_parallel_containers):
-        if cpus_per_container == 1:
-            cpu_sets.append(repr(cpu))
-        else:
-            cpu_sets.append('%i-%i' % (cpu,  cpu + cpus_per_container - 1))
-        cpu += cpus_per_container
-    return cpu_sets
-
 def term_handler(self, *args):
     sys.exit(0)
 
@@ -204,11 +189,6 @@ def main():
     # Copy the entrypoint to the testsuite volume
     subprocess.call(['cp', '--preserve=xattr', os.path.join(local_dir, 'docker-entrypoint.sh'), release.path])
     subprocess.call(['cp', '--preserve=xattr', os.path.join(local_dir, 'run-testsuite.sh'), release.path])
-
-    #cpu_sets = calculate_cpu_sets(args.max_cpus, args.container_cpus)
-    #nb_parallel_containers = len(cpu_sets)
-
-    #logging.info('Running a maximum of %i containers in parallel each using %i CPUs and using %i jobs' % (nb_parallel_containers, args.container_cpus, args.jobs))
 
     runner = ContainerRunner(client, args.tester, args.tester_name,
                              args.tester_address, args.force_rm, args.jobs,

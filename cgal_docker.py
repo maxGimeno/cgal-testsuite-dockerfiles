@@ -129,12 +129,16 @@ class ContainerRunner:
         cimg = [im for im in self.podman_client.images.list() if im.repoTags[0].rsplit(':')[1] == img.rsplit(':')[1] ]
         if len(cimg) == 0 :
           raise TestsuiteError('missing image ' + img)
-        print("img = ", img)
-        print("chosen_name = ", chosen_name)
+        #remove existing containers to avoid "container already exists" error.
+        for cont in self.podman_client.containers.list():
+          if chosen_name in cont['names']:
+            cont.remove(True)
+
         container = cimg[0].create(name=chosen_name,
             entrypoint='/mnt/testsuite/docker-entrypoint.sh',
             env=self.environment,
-            mount=self.bind
+            mount=self.bind,
+            rm=True
         )
         #.create_container(
         #    image=cimg,
