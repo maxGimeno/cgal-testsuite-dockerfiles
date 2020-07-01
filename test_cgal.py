@@ -157,7 +157,7 @@ def main():
     if not args.jobs:
         args.jobs = args.container_cpus
 
-    client = podman.Client()
+    client = podman.Client(args.podman_url)
 
     # Perform a check for existing, running containers.
     existing = [cont for cont in client.containers.list() if cont.status == 'running']
